@@ -881,7 +881,7 @@ int anpVarSetValue(YapiConnect* hConn, AnpVar* var, uint32_t arrayPos, PyObject*
             }
             enCodeStrSize = PyBytes_GET_SIZE(encoded);
             bindStr = PyBytes_AS_STRING(encoded);
-            costSize = (uint32_t)(enCodeStrSize + 2);      /* +2 for two '\0' */
+            costSize = (uint32_t)enCodeStrSize;
             if (costSize > var->size) {
                 if (adjustAnpVarBuffSize(var, costSize) < 0) {
                     Py_DECREF(encoded);
@@ -891,8 +891,6 @@ int anpVarSetValue(YapiConnect* hConn, AnpVar* var, uint32_t arrayPos, PyObject*
             memcpy(var->data + var->dataOffset, bindStr, (size_t)enCodeStrSize);
             var->indicator[arrayPos] = (int32_t)enCodeStrSize;
             var->dataOffset += costSize;
-            var->data[var->dataOffset - 2] = '\0';
-            var->data[var->dataOffset - 1] = '\0';
             Py_DECREF(encoded);
             return 0;
         }
@@ -974,7 +972,7 @@ int anpVarSetValue(YapiConnect* hConn, AnpVar* var, uint32_t arrayPos, PyObject*
             }
             enCodeStrSize = PyBytes_GET_SIZE(encoded);
             bindStr = PyBytes_AS_STRING(encoded);
-            costSize = (uint32_t)(enCodeStrSize + 2);      /* +2 for two '\0' */
+            costSize = (uint32_t)enCodeStrSize;
             if (costSize > var->size) {
                 if (adjustAnpVarBuffSize(var, costSize) < 0) {
                     Py_DECREF(encoded);
@@ -984,8 +982,6 @@ int anpVarSetValue(YapiConnect* hConn, AnpVar* var, uint32_t arrayPos, PyObject*
             memcpy(var->data + var->dataOffset, bindStr, (size_t)enCodeStrSize);
             var->indicator[arrayPos] = (int32_t)enCodeStrSize;
             var->dataOffset += costSize;
-            var->data[var->dataOffset - 2] = '\0';
-            var->data[var->dataOffset - 1] = '\0';
             Py_DECREF(encoded);
             return 0;
         }
