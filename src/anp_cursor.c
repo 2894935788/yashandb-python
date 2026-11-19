@@ -335,8 +335,9 @@ static YapiResult anpCursorSetBindVariableHelper(AnpCursor* cursor, unsigned num
         uint32_t bindCostSize;
         YapiType bindType;
         bool needCreateVar = false;
+        bool oldIsLob = anpVarIsLobType(oldVar);
         anpAdjustVarTypeSize(value, &bindCostSize, &bindType);
-        if (bindCostSize > CONVERT_TO_LOB_SIZE) {
+        if (!oldIsLob && (bindCostSize > CONVERT_TO_LOB_SIZE)) {
             needCreateVar = true;
         }
 
@@ -344,7 +345,7 @@ static YapiResult anpCursorSetBindVariableHelper(AnpCursor* cursor, unsigned num
             needCreateVar = true;
         }
 
-        if (oldVar->bufferSize < bindCostSize * numElements) {
+        if (!oldIsLob && (oldVar->bufferSize < bindCostSize * numElements)) {
             needCreateVar = true;
         }
 
@@ -355,9 +356,6 @@ static YapiResult anpCursorSetBindVariableHelper(AnpCursor* cursor, unsigned num
             // uninitialized memory. This is hit when e.g. the first value of a
             // column is None: the var starts as dbType UNKNOWN/size 1, then the
             // next non-null value forces a rebuild here.
-            bool copyData = (oldVar->dataOffset > 0) && !anpVarIsLobType(oldVar);
-            uint32_t copiedDataLen = oldVar->dataOffset;
-
             oldVar->size = bindCostSize;
             oldVar->dbType = bindType;
             VarAssist assist = { .isArray = oldVar->isArray, .numElements = numElements,
@@ -370,9 +368,35 @@ static YapiResult anpCursorSetBindVariableHelper(AnpCursor* cursor, unsigned num
             if (arrayPos > 0) {
                 memcpy((*newVar)->indicator, oldVar->indicator, (size_t)arrayPos * sizeof(int32_t));
             }
-            if (copyData && !anpVarIsLobType(*newVar)) {
-                memcpy((*newVar)->data, oldVar->data, copiedDataLen);
-                (*newVar)->dataOffset = copiedDataLen;
+
+            if (!anpVarIsLobType(*newVar)) {
+                // Same layout (non-LOB -> non-LOB): move the packed byte stream.
+                if (!oldIsLob && (oldVar->dataOffset > 0)) {
+                    memcpy((*newVar)->data, oldVar->data, oldVar->dataOffset);
+                    (*newVar)->dataOffset = oldVar->dataOffset;
+                }
+            } else if (!oldIsLob) {
+                // char/varchar -> clob or binary -> blob rebuild: rewrite the
+                // already-bound rows into the new LOB var's fixed locator slots,
+                // otherwise those rows are lost across the type switch.
+                bool srcHasTerm = ((*newVar)->transType == YAPI_TYPE_CLOB ||
+                                   (*newVar)->transType == YAPI_TYPE_NCLOB);
+                uint32_t srcOff = 0;
+                for (uint32_t j = 0; j < arrayPos; j++) {
+                    int32_t len = oldVar->indicator[j];
+                    if (len < 0) {
+                        continue;  // NULL occupies no byte in the old char buffer
+                    }
+                    if (yapiLobWrite(cursor->connection->hConn,
+                                     *(YapiLobLocator**)((*newVar)->data + j * sizeof(YapiLobLocator*)),
+                                     NULL, (uint8_t*)(oldVar->data + srcOff), (uint64_t)len) != YAPI_SUCCESS) {
+                        return YAPI_ERROR;
+                    }
+                    srcOff += (uint32_t)len;
+                    if (srcHasTerm) {
+                        srcOff += 1;  // char/varchar packed an extra '\0' per row
+                    }
+                }
             }
             varToSet = *newVar;
         }
