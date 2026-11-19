@@ -350,6 +350,14 @@ static YapiResult anpCursorSetBindVariableHelper(AnpCursor* cursor, unsigned num
 
         varToSet = oldVar;
         if ((numElements > oldVar->elements) || needCreateVar) {
+            // When recreating the var, preserve rows already bound into oldVar;
+            // otherwise their indicator/data are dropped and the array bind reads
+            // uninitialized memory. This is hit when e.g. the first value of a
+            // column is None: the var starts as dbType UNKNOWN/size 1, then the
+            // next non-null value forces a rebuild here.
+            bool copyData = (oldVar->dataOffset > 0) && !anpVarIsLobType(oldVar);
+            uint32_t copiedDataLen = oldVar->dataOffset;
+
             oldVar->size = bindCostSize;
             oldVar->dbType = bindType;
             VarAssist assist = { .isArray = oldVar->isArray, .numElements = numElements,
@@ -357,6 +365,14 @@ static YapiResult anpCursorSetBindVariableHelper(AnpCursor* cursor, unsigned num
             *newVar = anpNewVar(cursor, &assist);
             if (!*newVar) {
                 return YAPI_ERROR;
+            }
+
+            if (arrayPos > 0) {
+                memcpy((*newVar)->indicator, oldVar->indicator, (size_t)arrayPos * sizeof(int32_t));
+            }
+            if (copyData && !anpVarIsLobType(*newVar)) {
+                memcpy((*newVar)->data, oldVar->data, copiedDataLen);
+                (*newVar)->dataOffset = copiedDataLen;
             }
             varToSet = *newVar;
         }
